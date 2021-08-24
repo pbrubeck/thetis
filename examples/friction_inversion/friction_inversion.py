@@ -15,6 +15,12 @@ class OptimisationProgress(object):
     m = 0
     i = 0
     tic = None
+    nb_grad_evals = 0
+    nb_func_evals = 0
+
+    def reset_counters(self):
+        self.nb_grad_evals = 0
+        self.nb_func_evals = 0
 
     def update(self, j, djdm, m):
         """
@@ -24,12 +30,15 @@ class OptimisationProgress(object):
         self.dJdm = djdm
         self.m = m
 
+    def start_clock(self):
+        self.tic = time_mod.clock()
+
     def update_progress(self, state=None):
         """
         To call after successful line searches.
         """
         toc = time_mod.clock()
-        elapsed = 0.0 if self.tic is None else toc - self.tic
+        elapsed = '-' if self.tic is None else f'{toc - self.tic:.1f} s'
         self.tic = toc
         if state is not None:
             self.update(*state)
@@ -38,9 +47,12 @@ class OptimisationProgress(object):
         self.dJdm_progress.append(djdm)
         np.save("outputs/J_progress", self.J_progress)
         np.save("outputs/dJdm_progress", self.dJdm_progress)
-        print_output(f"line search {self.i:2d}:,"
-                     f" J = {self.J:.4e}, dJdm = {djdm:.4e}, duration {elapsed:.1f} s")
+        print_output(f"line search {self.i:2d}: "
+                     f"J={self.J:.3e}, dJdm={djdm:.3e}, "
+                     f"func_ev={self.nb_func_evals}, "
+                     f"grad_ev={self.nb_grad_evals}, duration {elapsed}")
         self.i += 1
+        self.reset_counters()
 
 
 op = OptimisationProgress()
@@ -67,8 +79,12 @@ depth_riv = 5.0
 bathymetry_2d.interpolate(depth_oce + (depth_riv - depth_oce)*x/lx)
 
 # Control parameter: Manning friction coefficient
-manning = Function(P1_2d).assign(1.0e-03)
+fs_control = P1_2d
+# fs_control = FunctionSpace(mesh2d, 'R', 0)
+manning = Function(fs_control).assign(1.0e-03)
 c = Control(manning)
+
+print(f'initial Manning coeff: {manning.dat.data.min()} .. {manning.dat.data.min()}')
 
 # Create solver
 solver_obj = solver2d.FlowSolver2d(mesh2d, bathymetry_2d)
@@ -127,11 +143,19 @@ def post_grad_cb(j, djdm, m):
     Stash optimisation state.
     """
     op.update(j, djdm, m)
+    op.nb_grad_evals += 1
+
+
+def post_func_cb(*args):
+    """
+    Update func eval counter
+    """
+    op.nb_func_evals += 1
 
 
 # Solve and setup reduced functional
 solver_obj.iterate(update_forcings=qoi)
-Jhat = ReducedFunctional(op.J, c, derivative_cb_post=post_grad_cb)
+Jhat = ReducedFunctional(op.J, c, derivative_cb_post=post_grad_cb, eval_cb_post=post_func_cb)
 stop_annotating()
 
 # Consistency test
@@ -141,7 +165,7 @@ assert np.isclose(J, op.J)
 print_output("Consistency test passed!")
 
 # Taylor test
-dc = Function(P1_2d)
+dc = Function(fs_control)
 dc.assign(1.0e-04)
 minconv = taylor_test(Jhat, manning, dc)
 assert minconv > 1.9
@@ -165,6 +189,10 @@ def cb(m):
 
 # Run inversion
 print_output("Running inversion")
+op.reset_counters()
+op.start_clock()
+J = Jhat(manning)
 op.update_progress(state=[float(J), Jhat.derivative(), manning])
 manning_opt = minimize(Jhat, method="L-BFGS-B", bounds=[0.0, np.Inf], callback=cb)
+print(f'Optimal Manning coeff: {manning_opt.dat.data.min()} .. {manning_opt.dat.data.min()}')
 File("outputs/manning_optimised.pvd").write(manning_opt)

@@ -65,7 +65,7 @@ ny = 2
 ly = delta_x * ny
 mesh2d = RectangleMesh(nx, ny, lx, ly)
 
-t_end = 5 * 3600.
+t_end = 8 * 3600.
 u_mag = Constant(6.0)
 t_export = 600.
 dt = 600.
@@ -144,7 +144,7 @@ def qoi(t):
     elev_o.interpolate(solver_obj.fields.solution_2d.split()[1])
     elev_d.assign(data.pop(0))
     area = lx*ly
-    J_scale = 1e8
+    J_scale = 1e9
     J_misfit = assemble(dtc*misfit**2*dx)
     #op.J += J_misfit*J_scale/area
     J_reg_grag = assemble(dtc*reg_c_grad*dx)
@@ -203,8 +203,8 @@ def cb(m):
 # Run inversion
 opt_method = "L-BFGS-B"
 options = {
-    'maxiter': 10,
-    # 'ftol': 1e-2,
+    'maxiter': 100,
+    'ftol': 5e-3,
     'iprint': 101,
 }
 print_output(f"Running {opt_method} optimization")
@@ -212,7 +212,7 @@ op.reset_counters()
 op.start_clock()
 J = Jhat(manning)
 op.update_progress(state=[float(J), Jhat.derivative(), manning])
-manning_opt = minimize(Jhat, method=opt_method, bounds=[0.0, 0.1], callback=cb,
+manning_opt = minimize(Jhat, method=opt_method, bounds=[1e-4, 1e-1], callback=cb,
                        options=options)
 print(f'Optimal Manning coeff: {manning_opt.dat.data.min()} .. {manning_opt.dat.data.max()}')
 File("outputs/manning_optimised.pvd").write(manning_opt)

@@ -7,7 +7,7 @@ ny = 2
 ly = delta_x * ny
 mesh2d = RectangleMesh(nx, ny, lx, ly)
 
-t_end = 5 * 3600.
+t_end = 8 * 3600.
 u_mag = Constant(6.0)
 t_export = 600.
 dt = 600.
@@ -27,7 +27,7 @@ bathymetry_2d.interpolate(depth_oce + (depth_riv - depth_oce)*x/lx)
 # friction Manning coefficient
 manning = Function(P1_2d, name='Manning coefficient')
 manning_low = 1e-3
-manning_high = 2e-2
+manning_high = 1.5e-2
 manning.interpolate(
     conditional(x < 60e3, manning_low, manning_high))
 File('manning.pvd').write(manning)

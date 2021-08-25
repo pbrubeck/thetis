@@ -59,7 +59,7 @@ op = OptimisationProgress()
 
 # Spatial discretisation
 lx = 100e3
-nx = 50
+nx = 30
 delta_x = lx/nx
 ny = 2
 ly = delta_x * ny
@@ -67,8 +67,8 @@ mesh2d = RectangleMesh(nx, ny, lx, ly)
 
 t_end = 5 * 3600.
 u_mag = Constant(6.0)
-t_export = 300.
-dt = 300.
+t_export = 600.
+dt = 600.
 
 # Bathymetry
 P1_2d = get_functionspace(mesh2d, 'CG', 1)
@@ -84,7 +84,7 @@ fs_control = P1_2d
 manning = Function(fs_control).assign(1.0e-03)
 c = Control(manning)
 
-print(f'initial Manning coeff: {manning.dat.data.min()} .. {manning.dat.data.min()}')
+print(f'initial Manning coeff: {manning.dat.data.min()} .. {manning.dat.data.max()}')
 
 # Create solver
 solver_obj = solver2d.FlowSolver2d(mesh2d, bathymetry_2d)
@@ -93,7 +93,8 @@ options.manning_drag_coefficient = manning
 options.simulation_export_time = t_export
 options.simulation_end_time = t_end
 options.horizontal_velocity_scale = u_mag
-options.fields_to_export = ['uv_2d', 'elev_2d']
+options.fields_to_export = []
+options.fields_to_export_hdf5 = []
 options.swe_timestepper_type = 'CrankNicolson'
 if not hasattr(options.swe_timestepper_options, 'use_automatic_timestep'):
     options.timestep = dt
@@ -107,6 +108,13 @@ P0_0d = FunctionSpace(mesh0d, 'DG', 0)
 elev_o = Function(P0_0d, name='gauge obs')
 elev_d = Function(P0_0d, name='gauge data')
 misfit = elev_o - elev_d
+
+# regularization term in const function
+# grad(manning) is roughly manning/delta_x = O(1e-6)
+# misfit is O(1)
+# thus gamma grad must be < 1e12
+gamma_grad = Constant(1e1)
+reg_c_grad = gamma_grad * dot(grad(manning), grad(manning))
 
 # Set initial condition for elevation, piecewise linear function
 elev_init = Function(P1_2d)
@@ -135,7 +143,12 @@ def qoi(t):
     """
     elev_o.interpolate(solver_obj.fields.solution_2d.split()[1])
     elev_d.assign(data.pop(0))
-    op.J += assemble(dtc*misfit**2*dx)
+    area = lx*ly
+    J_scale = 1e8
+    J_misfit = assemble(dtc*misfit**2*dx)
+    #op.J += J_misfit*J_scale/area
+    J_reg_grag = assemble(dtc*reg_c_grad*dx)
+    op.J += (J_misfit + J_reg_grag)*J_scale/area
 
 
 def post_grad_cb(j, djdm, m):
@@ -159,17 +172,17 @@ Jhat = ReducedFunctional(op.J, c, derivative_cb_post=post_grad_cb, eval_cb_post=
 stop_annotating()
 
 # Consistency test
-print_output("Running consistency test")
-J = Jhat(manning)
-assert np.isclose(J, op.J)
-print_output("Consistency test passed!")
+#print_output("Running consistency test")
+#J = Jhat(manning)
+#assert np.isclose(J, op.J)
+#print_output("Consistency test passed!")
 
 # Taylor test
-dc = Function(fs_control)
-dc.assign(1.0e-04)
-minconv = taylor_test(Jhat, manning, dc)
-assert minconv > 1.9
-print_output("Taylor test passed!")
+#dc = Function(fs_control)
+#dc.assign(1.0e-04)
+#minconv = taylor_test(Jhat, manning, dc)
+#assert minconv > 1.9
+#print_output("Taylor test passed!")
 
 # VTU outputs for optimisation progress
 outfile_m = File("outputs/manning_progress.pvd")
@@ -188,11 +201,18 @@ def cb(m):
 
 
 # Run inversion
-print_output("Running inversion")
+opt_method = "L-BFGS-B"
+options = {
+    'maxiter': 10,
+    # 'ftol': 1e-2,
+    'iprint': 101,
+}
+print_output(f"Running {opt_method} optimization")
 op.reset_counters()
 op.start_clock()
 J = Jhat(manning)
 op.update_progress(state=[float(J), Jhat.derivative(), manning])
-manning_opt = minimize(Jhat, method="L-BFGS-B", bounds=[0.0, np.Inf], callback=cb)
-print(f'Optimal Manning coeff: {manning_opt.dat.data.min()} .. {manning_opt.dat.data.min()}')
+manning_opt = minimize(Jhat, method=opt_method, bounds=[0.0, 0.1], callback=cb,
+                       options=options)
+print(f'Optimal Manning coeff: {manning_opt.dat.data.min()} .. {manning_opt.dat.data.max()}')
 File("outputs/manning_optimised.pvd").write(manning_opt)

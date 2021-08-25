@@ -113,7 +113,7 @@ misfit = elev_o - elev_d
 # grad(manning) is roughly manning/delta_x = O(1e-6)
 # misfit is O(1)
 # thus gamma grad must be < 1e12
-gamma_grad = Constant(1e1)
+gamma_grad = Constant(5.0)
 reg_c_grad = gamma_grad * dot(grad(manning), grad(manning))
 
 # Set initial condition for elevation, piecewise linear function
@@ -144,7 +144,7 @@ def qoi(t):
     elev_o.interpolate(solver_obj.fields.solution_2d.split()[1])
     elev_d.assign(data.pop(0))
     area = lx*ly
-    J_scale = 1e9
+    J_scale = 1e12
     J_misfit = assemble(dtc*misfit**2*dx)
     #op.J += J_misfit*J_scale/area
     J_reg_grag = assemble(dtc*reg_c_grad*dx)

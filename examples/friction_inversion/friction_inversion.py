@@ -18,6 +18,12 @@ class OptimisationProgress(object):
     tic = None
     nb_grad_evals = 0
     nb_func_evals = 0
+    control_name = 'Manning coefficient'
+
+    def __init__(self, output_dir='outputs'):
+        self.output_dir = output_dir
+        self.outfile_m = File(f'{self.output_dir}/control_progress.pvd')
+        self.outfile_dJdm = File(f'{self.output_dir}/gradient_progress.pvd')
 
     def reset_counters(self):
         self.nb_grad_evals = 0
@@ -46,14 +52,19 @@ class OptimisationProgress(object):
         djdm = norm(self.dJdm)
         self.J_progress.append(self.J)
         self.dJdm_progress.append(djdm)
-        np.save("outputs/J_progress", self.J_progress)
-        np.save("outputs/dJdm_progress", self.dJdm_progress)
+        np.save(f"{self.output_dir}/J_progress", self.J_progress)
+        np.save(f"{self.output_dir}/dJdm_progress", self.dJdm_progress)
         print_output(f"line search {self.i:2d}: "
                      f"J={self.J:.3e}, dJdm={djdm:.3e}, "
                      f"func_ev={self.nb_func_evals}, "
                      f"grad_ev={self.nb_grad_evals}, duration {elapsed}")
         self.i += 1
         self.reset_counters()
+
+        self.m.rename(self.control_name)
+        self.dJdm.rename("Gradient")
+        self.outfile_m.write(self.m)
+        self.outfile_dJdm.write(self.dJdm)
 
 
 op = OptimisationProgress()
@@ -170,7 +181,6 @@ def qoi():
     obs_func_list.append(obs_func)
     elev_obs.assign(obs_func)
     elev_mod.interpolate(solver_obj.fields.elev_2d)
-    print(t, elev_obs.dat.data, elev_mod.dat.data)
     area = lx*ly
     J_scale = 1e12
     J_misfit = assemble(dtc*misfit**2*dx)
@@ -213,20 +223,12 @@ stop_annotating()
 #assert minconv > 1.9
 #print_output("Taylor test passed!")
 
-# VTU outputs for optimisation progress
-outfile_m = File("outputs/manning_progress.pvd")
-outfile_dJdm = File("outputs/gradient_progress.pvd")
-
 
 def cb(m):
     """
     Stash optimisation progress after successful line search.
     """
     op.update_progress()
-    op.m.rename("Manning coefficient")
-    op.dJdm.rename("Gradient")
-    outfile_m.write(op.m)
-    outfile_dJdm.write(op.dJdm)
 
 
 # Run inversion

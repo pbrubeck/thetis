@@ -39,6 +39,7 @@ options.manning_drag_coefficient = manning
 options.simulation_export_time = t_export
 options.simulation_end_time = t_end
 options.horizontal_velocity_scale = u_mag
+options.output_directory = 'outputs_forward'
 options.fields_to_export = ['uv_2d', 'elev_2d']
 options.swe_timestepper_type = 'CrankNicolson'
 if not hasattr(options.swe_timestepper_options, 'use_automatic_timestep'):
@@ -46,10 +47,14 @@ if not hasattr(options.swe_timestepper_options, 'use_automatic_timestep'):
 
 solver_obj.create_equations()
 # store elevation time series at stations
-xy = [[30e3, ly/2.], [80e3, ly/2]]
-cb = DetectorsCallback(solver_obj, xy, ['elev_2d'], name='stations',
-                       detector_names=['station_A', 'station_B'], append_to_log=False)
-solver_obj.add_callback(cb)
+stations = [
+    ('stationA', (30e3, ly/2)),
+    ('stationB', (80e3, ly/2)),
+]
+for name, (sta_x, sta_y) in stations:
+    cb = TimeSeriesCallback2D(solver_obj, ['elev_2d'], sta_x, sta_y, name,
+                              append_to_log=False)
+    solver_obj.add_callback(cb)
 
 # set initial condition for elevation, piecewise linear function
 elev_init = Function(P1_2d)

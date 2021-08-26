@@ -2,6 +2,7 @@ from thetis import *
 from firedrake_adjoint import *
 import h5py
 import time as time_mod
+from scipy.interpolate import interp1d
 
 
 class OptimisationProgress(object):
@@ -101,21 +102,6 @@ if not hasattr(options.swe_timestepper_options, 'use_automatic_timestep'):
 dtc = Constant(options.timestep)
 solver_obj.create_equations()
 
-# Create 0D mesh
-xy = [[30e3, ly/2.], [80e3, ly/2]]
-mesh0d = VertexOnlyMesh(mesh2d, xy)
-P0_0d = FunctionSpace(mesh0d, 'DG', 0)
-elev_o = Function(P0_0d, name='gauge obs')
-elev_d = Function(P0_0d, name='gauge data')
-misfit = elev_o - elev_d
-
-# regularization term in const function
-# grad(manning) is roughly manning/delta_x = O(1e-6)
-# misfit is O(1)
-# thus gamma grad must be < 1e12
-gamma_grad = Constant(5.0)
-reg_c_grad = gamma_grad * dot(grad(manning), grad(manning))
-
 # Set initial condition for elevation, piecewise linear function
 elev_init = Function(P1_2d)
 elev_height = 6.0
@@ -125,24 +111,66 @@ elev_init.interpolate(conditional(x < elev_ramp_lx,
                                   0.0))
 solver_obj.assign_initial_conditions(elev=elev_init, uv=Constant((1e-5, 0)))
 
-# Load data as a list of 0D Functions
-with h5py.File('outputs/diagnostic_stations.hdf5', 'r') as f:
-    A = np.array(f['station_A'])
-    B = np.array(f['station_B'])
-data = []
-for a, b in zip(A, B):
-    datum = Function(P0_0d)
-    datum.dat.data[0] = a
-    datum.dat.data[1] = b
-    data.append(datum)
+# Load observation time series
+obs_dir = 'outputs_forward'
+file_list = [
+    f'{obs_dir}/diagnostic_timeseries_stationA_elev.hdf5',
+    f'{obs_dir}/diagnostic_timeseries_stationB_elev.hdf5',
+]
+station_coords = []
+station_time = []
+station_vals = []
+for f in file_list:
+    with h5py.File(f) as h5file:
+        t = h5file['time'][:].flatten()
+        v = h5file['elev'][:].flatten()
+        x = h5file.attrs['x']
+        y = h5file.attrs['y']
+        station_coords.append((x, y))
+        station_time.append(t)
+        station_vals.append(v)
+
+# Construct timeseries interpolator
+station_interpolators = []
+for t, v in zip(station_time, station_vals):
+    ip = interp1d(t, v)
+    station_interpolators.append(ip)
 
 
-def qoi(t):
+def interp_observations(t):
+    return [float(ip(t)) for ip in station_interpolators]
+
+
+# Create 0D mesh for station evaluation
+mesh0d = VertexOnlyMesh(mesh2d, station_coords)
+P0_0d = FunctionSpace(mesh0d, 'DG', 0)
+elev_obs = Function(P0_0d, name='gauge observations')
+elev_mod = Function(P0_0d, name='gauge modeled')
+misfit = elev_obs - elev_mod
+
+# regularization term in const function
+# grad(manning) is roughly manning/delta_x = O(1e-6)
+# misfit is O(1)
+# thus gamma grad must be < 1e12
+gamma_grad = Constant(5.0)
+reg_c_grad = gamma_grad * dot(grad(manning), grad(manning))
+
+obs_func_list = []  # need to keep target data in memory for annotation
+
+
+def qoi():
     """
     Compute square misfit between data and observations.
+
+    NOTE: this should be called as a post-solve callback operator
     """
-    elev_o.interpolate(solver_obj.fields.solution_2d.split()[1])
-    elev_d.assign(data.pop(0))
+    t = solver_obj.simulation_time
+    obs_func = Function(P0_0d)
+    obs_func.dat.data[:] = interp_observations(t)
+    obs_func_list.append(obs_func)
+    elev_obs.assign(obs_func)
+    elev_mod.interpolate(solver_obj.fields.elev_2d)
+    print(t, elev_obs.dat.data, elev_mod.dat.data)
     area = lx*ly
     J_scale = 1e12
     J_misfit = assemble(dtc*misfit**2*dx)
@@ -167,7 +195,8 @@ def post_func_cb(*args):
 
 
 # Solve and setup reduced functional
-solver_obj.iterate(update_forcings=qoi)
+
+solver_obj.iterate(export_func=qoi)
 Jhat = ReducedFunctional(op.J, c, derivative_cb_post=post_grad_cb, eval_cb_post=post_func_cb)
 stop_annotating()
 

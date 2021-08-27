@@ -12,8 +12,8 @@ class OptimisationProgress(object):
     J_progress = []
     dJdm_progress = []
     J = 0
-    dJdm = 0
-    m = 0
+    dJdm = None
+    m = None
     i = 0
     tic = None
     nb_grad_evals = 0
@@ -58,13 +58,19 @@ class OptimisationProgress(object):
                      f"J={self.J:.3e}, dJdm={djdm:.3e}, "
                      f"func_ev={self.nb_func_evals}, "
                      f"grad_ev={self.nb_grad_evals}, duration {elapsed}")
-        self.i += 1
-        self.reset_counters()
 
         self.m.rename(self.control_name)
         self.dJdm.rename("Gradient")
         self.outfile_m.write(self.m)
         self.outfile_dJdm.write(self.dJdm)
+
+        h5_filename = f'{self.output_dir}/hdf5/control_{self.i:04d}.h5'
+        create_directory(os.path.split(h5_filename)[0])
+        with DumbCheckpoint(h5_filename, mode=FILE_CREATE) as f:
+            f.store(self.m)
+
+        self.i += 1
+        self.reset_counters()
 
 
 op = OptimisationProgress()
